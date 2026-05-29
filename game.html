@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade Foosball</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at top, #3a7d2a 0%, #1f3d12 60%, #0c1a07 100%);
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+
+        .container {
+            width: 1000px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 12px;
+            text-shadow: 2px 2px 8px rgba(0,0,0,0.6);
+            letter-spacing: 1px;
+        }
+
+        canvas {
+            width: 100%;
+            height: auto;
+            border-radius: 14px;
+            border: 8px solid #222;
+            box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+            background: #1f4815;
+        }
+
+        .scoreboard {
+            margin: 16px 0 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: white;
+            font-size: 1.25rem;
+            font-weight: bold;
+        }
+
+        .controls {
+            margin-top: 14px;
+            background: rgba(0,0,0,0.45);
+            border-radius: 12px;
+            padding: 16px 20px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.2);
+            text-align: left;
+        }
+
+        .controls p {
+            margin: 6px 0;
+            line-height: 1.5;
+        }
+
+        .key {
+            display: inline-block;
+            background: #fff;
+            color: #111;
+            border-radius: 5px;
+            padding: 3px 9px;
+            font-weight: bold;
+            margin: 0 3px;
+        }
+
+        .winner {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            border: 3px solid #fff;
+            color: #fff;
+            padding: 28px 36px;
+            border-radius: 18px;
+            font-size: 2rem;
+            text-align: center;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 0 40px rgba(255,255,255,0.25);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚽ Arcade Foosball</h1>
+
+        <div class="scoreboard">
+            <div><span style="color:#FF4444;">Red Team</span>: <span id="playerScore">0</span></div>
+            <div style="font-size: 1rem; color:#ddd;">First to 5 wins</div>
+            <div><span style="color:#1E3A8A;">Blue AI</span>: <span id="aiScore">0</span></div>
+        </div>
+
+        <canvas id="gameCanvas" width="1000" height="600"></canvas>
+
+        <div class="controls">
+            <p><span class="key">A</span> - Goalkeepers down | <span class="key">Q</span> - Goalkeepers up</p>
+            <p><span class="key">S</span> - Defenders down | <span class="key">W</span> - Defenders up</p>
+            <p><span class="key">D</span> - Midfielders down | <span class="key">E</span> - Midfielders up</p>
+            <p><span class="key">F</span> - Strikers down | <span class="key">R</span> - Strikers up</p>
+            <p><span class="key">R</span> (after game over) - Restart</p>
+        </div>
+    </div>
+
+    <div class="winner" id="winnerMessage">GAME OVER</div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const playerScoreEl = document.getElementById('playerScore');
+        const aiScoreEl = document.getElementById('aiScore');
+        const winnerMessage = document.getElementById('winnerMessage');
+
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
+        const TOP_MARGIN = 40;
+        const BOTTOM_MARGIN = 40;
+        const FIELD_LEFT = 20;
+        const FIELD_RIGHT = WIDTH - 20;
+        const GOAL_WIDTH = 20;
+        const PLAYER_RADIUS = 12;
+        const BALL_RADIUS = 9;
+        const MAX_SCORE = 5;
+        const PLAYER_OFFSETS = [-70, 0, 70];
+        const ROD_COLOR = '#111';
+        const PLAYER_COLOR_RED = '#FF4444';
+        const PLAYER_COLOR_BLUE = '#1E3A8A';
+        const PENALTY_TOP = (HEIGHT - 260) / 2;
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const rods = [
+            { x: 140, team: 'red', role: 'goalies', downKey: 'a', upKey: 'q', y: HEIGHT / 2 },
+            { x: 240, team: 'red', role: 'defenders', downKey: 's', upKey: 'w', y: HEIGHT / 2 },
+            { x: 340, team: 'blue', role: 'strikers', tapChance: 0.14, aiSpeed: 1.4, y: HEIGHT / 2 },
+            { x: 440, team: 'red', role: 'midfielders', downKey: 'd', upKey: 'e', y: HEIGHT / 2 },
+            { x: 560, team: 'blue', role: 'midfielders', tapChance: 0.16, aiSpeed: 1.5, y: HEIGHT / 2 },
+            { x: 660, team: 'red', role: 'strikers', downKey: 'f', upKey: 'r', y: HEIGHT / 2 },
+            { x: 760, team: 'blue', role: 'defenders', tapChance: 0.18, aiSpeed: 1.6, y: HEIGHT / 2 },
+            { x: 860, team: 'blue', role: 'goalies', tapChance: 0.2, aiSpeed: 1.8, y: HEIGHT / 2 }
+        ];
+        const redRods = rods.filter((rod) => rod.team === 'red');
+        const blueRods = rods.filter((rod) => rod.team === 'blue');
+
+        let paused = false;
+        let playerScore = 0;
+        let aiScore = 0;
+        let gameOver = false;
+        const keys = {};
+
+        const ball = {
+            x: WIDTH / 2,
+            y: HEIGHT / 2,
+            vx: 3,
+            vy: 1.8,
+            radius: BALL_RADIUS
+        };
+
+        function resetBall() {
+            ball.x = WIDTH / 2;
+            ball.y = HEIGHT / 2;
+            ball.vx = (Math.random() > 0.5 ? 1 : -1) * (2.6 + Math.random() * 0.6);
+            ball.vy = (Math.random() - 0.5) * 2;
+        }
+
+        function playSound(type) {
+            const now = audioContext.currentTime;
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+
+            if (type === 'kick') {
+                osc.frequency.setValueAtTime(520, now);
+                osc.frequency.exponentialRampToValueAtTime(320, now + 0.08);
+                gain.gain.setValueAtTime(0.18, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            } else if (type === 'tap') {
+                osc.frequency.setValueAtTime(640, now);
+                osc.frequency.exponentialRampToValueAtTime(420, now + 0.05);
+                gain.gain.setValueAtTime(0.14, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                osc.start(now);
+                osc.stop(now + 0.05);
+            } else if (type === 'goal') {
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.25);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            } else if (type === 'cheer') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(440, now);
+                osc.frequency.exponentialRampToValueAtTime(220, now + 0.2);
+                gain.gain.setValueAtTime(0.12, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            }
+        }
+
+        function restartGame() {
+            playerScore = 0;
+            aiScore = 0;
+            gameOver = false;
+            playerScoreEl.textContent = '0';
+            aiScoreEl.textContent = '0';
+            winnerMessage.style.display = 'none';
+            rods.forEach((rod) => (rod.y = HEIGHT / 2));
+            resetBall();
+        }
+
+        document.addEventListener('keydown', (event) => {
+            const key = event.key.toLowerCase();
+            keys[key] = true;
+            if (key === 'r' && gameOver) {
+                restartGame();
+            }
+            if (event.code === 'Space') {
+                paused = !paused;
+                event.preventDefault();
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            keys[event.key.toLowerCase()] = false;
+        });
+
+        function clampRod(rod) {
+            const minY = TOP_MARGIN + 80;
+            const maxY = HEIGHT - BOTTOM_MARGIN - 80;
+            rod.y = Math.max(minY, Math.min(maxY, rod.y));
+        }
+
+        function updateRods() {
+            rods.forEach((rod) => {
+                if (rod.team === 'red') {
+                    if (keys[rod.downKey]) rod.y += 7;
+                    if (keys[rod.upKey]) rod.y -= 7;
+                } else {
+                    if (rod.y < ball.y - 14) rod.y += rod.aiSpeed;
+                    if (rod.y > ball.y + 14) rod.y -= rod.aiSpeed;
+                }
+                clampRod(rod);
+            });
+        }
+
+        function checkPlayerTap(rod) {
+            const sign = rod.team === 'red' ? 1 : -1;
+            const players = PLAYER_OFFSETS.map((offset) => ({ x: rod.x, y: rod.y + offset }));
+            for (const player of players) {
+                const dx = ball.x - player.x;
+                const dy = ball.y - player.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist < PLAYER_RADIUS + BALL_RADIUS + 4) {
+                    if (rod.team === 'red' && keys[rod.downKey]) {
+                        ball.vx = 4.0;
+                        ball.vy = (dy / 16) + (Math.random() - 0.5) * 0.8;
+                        ball.x = player.x + sign * (PLAYER_RADIUS + BALL_RADIUS + 2);
+                        playSound('kick');
+                        return true;
+                    }
+                    if (rod.team === 'blue' && Math.random() < rod.tapChance) {
+                        ball.vx = -4.0;
+                        ball.vy = (dy / 18) + (Math.random() - 0.5) * 0.8;
+                        ball.x = player.x + sign * (PLAYER_RADIUS + BALL_RADIUS + 2);
+                        playSound('kick');
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function collideWithPlayers() {
+            rods.forEach((rod) => {
+                const players = PLAYER_OFFSETS.map((offset) => ({ x: rod.x, y: rod.y + offset }));
+                players.forEach((player) => {
+                    const dx = ball.x - player.x;
+                    const dy = ball.y - player.y;
+                    const distance = Math.hypot(dx, dy);
+                    const minDistance = PLAYER_RADIUS + BALL_RADIUS;
+                    if (distance < minDistance) {
+                        const nx = distance ? dx / distance : 1;
+                        const ny = distance ? dy / distance : 0;
+                        const overlap = minDistance - distance + 0.5;
+                        ball.x += nx * overlap;
+                        ball.y += ny * overlap;
+                        const dot = ball.vx * nx + ball.vy * ny;
+                        ball.vx -= 2 * dot * nx;
+                        ball.vy -= 2 * dot * ny;
+                        const speed = Math.min(4.8, Math.hypot(ball.vx, ball.vy));
+                        const angle = Math.atan2(ball.vy, ball.vx);
+                        ball.vx = Math.cos(angle) * speed;
+                        ball.vy = Math.sin(angle) * speed;
+                        playSound('tap');
+                    }
+                });
+            });
+        }
+
+        function updateBall() {
+            ball.x += ball.vx;
+            ball.y += ball.vy;
+
+            if (ball.y - BALL_RADIUS < TOP_MARGIN) {
+                ball.y = TOP_MARGIN + BALL_RADIUS;
+                ball.vy *= -1;
+            }
+            if (ball.y + BALL_RADIUS > HEIGHT - BOTTOM_MARGIN) {
+                ball.y = HEIGHT - BOTTOM_MARGIN - BALL_RADIUS;
+                ball.vy *= -1;
+            }
+
+            if (ball.x - BALL_RADIUS < FIELD_LEFT + GOAL_WIDTH) {
+                if (ball.y > PENALTY_TOP + 20 && ball.y < PENALTY_TOP + 240) {
+                    aiScore += 1;
+                    aiScoreEl.textContent = aiScore;
+                    playSound('goal');
+                    playSound('cheer');
+                    if (aiScore >= MAX_SCORE) endGame('BLUE AI WINS!');
+                    resetBall();
+                    return;
+                } else {
+                    ball.x = FIELD_LEFT + GOAL_WIDTH + BALL_RADIUS;
+                    ball.vx *= -1;
+                }
+            }
+
+            if (ball.x + BALL_RADIUS > FIELD_RIGHT - GOAL_WIDTH) {
+                if (ball.y > PENALTY_TOP + 20 && ball.y < PENALTY_TOP + 240) {
+                    playerScore += 1;
+                    playerScoreEl.textContent = playerScore;
+                    playSound('goal');
+                    playSound('cheer');
+                    if (playerScore >= MAX_SCORE) endGame('RED TEAM WINS!');
+                    resetBall();
+                    return;
+                } else {
+                    ball.x = FIELD_RIGHT - GOAL_WIDTH - BALL_RADIUS;
+                    ball.vx *= -1;
+                }
+            }
+        }
+
+        function endGame(message) {
+            gameOver = true;
+            winnerMessage.textContent = message + '\n(Press R to restart)';
+            winnerMessage.style.display = 'block';
+        }
+
+        function drawField() {
+            ctx.fillStyle = '#2d6b1f';
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(FIELD_LEFT, TOP_MARGIN, FIELD_RIGHT - FIELD_LEFT, HEIGHT - TOP_MARGIN - BOTTOM_MARGIN);
+
+            ctx.beginPath();
+            ctx.moveTo(WIDTH / 2, TOP_MARGIN);
+            ctx.lineTo(WIDTH / 2, HEIGHT - BOTTOM_MARGIN);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(WIDTH / 2, HEIGHT / 2, 70, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(WIDTH / 2, HEIGHT / 2, 12, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.strokeRect(FIELD_LEFT, PENALTY_TOP, 130, 260);
+            ctx.strokeRect(FIELD_RIGHT - 130, PENALTY_TOP, 130, 260);
+
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(FIELD_LEFT + GOAL_WIDTH, PENALTY_TOP + 20);
+            ctx.lineTo(FIELD_LEFT + GOAL_WIDTH, PENALTY_TOP + 240);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(FIELD_RIGHT - GOAL_WIDTH, PENALTY_TOP + 20);
+            ctx.lineTo(FIELD_RIGHT - GOAL_WIDTH, PENALTY_TOP + 240);
+            ctx.stroke();
+        }
+
+        function drawRods() {
+            rods.forEach((rod) => {
+                ctx.fillStyle = ROD_COLOR;
+                ctx.fillRect(rod.x - 6, TOP_MARGIN, 12, HEIGHT - TOP_MARGIN - BOTTOM_MARGIN);
+                const players = PLAYER_OFFSETS.map((offset) => ({ x: rod.x, y: rod.y + offset }));
+                players.forEach((player) => {
+                    ctx.beginPath();
+                    ctx.fillStyle = rod.team === 'red' ? PLAYER_COLOR_RED : PLAYER_COLOR_BLUE;
+                    ctx.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                });
+            });
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.fillStyle = '#ffffff';
+            ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#f7c844';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function draw() {
+            drawField();
+            drawRods();
+            drawBall();
+        }
+
+        function loop() {
+            if (!gameOver && !paused) {
+                updateRods();
+                updateBall();
+                collideWithPlayers();
+                rods.forEach((rod) => checkPlayerTap(rod));
+            }
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        restartGame();
+        loop();
+    </script>
+</body>
+</html>
